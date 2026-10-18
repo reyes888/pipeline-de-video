@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Proyectos - Pipeline de Video{% endblock %}
+{% block content %}
+<div x-data="dashboard()">
+  <div class="topbar">
+    <div>
+      <h1>🎬 Pipeline de Video</h1>
+      <div class="subtitle">Descarga, transcribe y encuentra los mejores clips — todo en un solo lugar.</div>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <button class="btn btn-primary" @click="showNew = !showNew">+ Nuevo proyecto</button>
+      <button class="btn" @click="shutdownServer()" title="Apagar el servidor">⏻ Apagar</button>
+    </div>
+  </div>
+
+  <div class="card new-project-box" x-show="showNew" x-cloak x-transition>
+    <div class="tab-switch">
+      <button type="button" class="tab-btn" :class="{active: newTab === 'link'}" @click="newTab = 'link'">🔗 Pegar link(s)</button>
+      <button type="button" class="tab-btn" :class="{active: newTab === 'upload'}" @click="newTab = 'upload'">📤 Subir archivo(s)</button>
+    </div>
+
+    <div x-show="newTab === 'link'">
+      <div class="field">
+        <label>Links (uno por línea)</label>
+        <textarea x-model="urlsText" placeholder="https://www.tiktok.com/@usuario/video/...&#10;https://www.facebook.com/watch/?v=..."></textarea>
+      </div>
+      <div class="actions">
+        <button class="btn" @click="showNew = false">Cancelar</button>
+        <button class="btn btn-primary" :disabled="creating" @click="createProjects()">
+          <span x-show="creating" class="spinner"></span>
+          <span x-text="creating ? 'Creando...' : 'Crear proyecto(s)'"></span>
+        </button>
+      </div>
+    </div>
+
+    <div x-show="newTab === 'upload'">
+      <div class="dropzone"
+           :class="{dragover: dragOver}"
+           @dragover.prevent="dragOver = true"
+           @dragleave.prevent="dragOver = false"
+           @drop.prevent="dragOver = false; handleDrop($event)"
+           @click="$refs.fileInput.click()">
+        <div class="emoji">🎞️</div>
+        <p><strong>Arrastra tus videos aquí</strong> o haz clic para elegir</p>
+        <p class="hint">Detecta y convierte el códec automáticamente si hace falta</p>
+        <input type="file" x-ref="fileInput" multiple accept="video/*" class="hidden-input" @change="handleFileSelect($event)">
+      </div>
+
+      <div class="selected-files" x-show="selectedFiles.length" x-cloak>
+        <template x-for="(f, idx) in selectedFiles" :key="f.name + f.size">
+          <div class="selected-file-row">
+            <span class="name" x-text="f.name"></span>
+            <span class="size" x-text="formatBytes(f.size)"></span>
+            <button type="button" class="btn btn-sm" @click="selectedFiles.splice(idx, 1)" :disabled="uploading">✕</button>
+          </div>
+        </template>
+      </div>
+
+      <div class="progress-bar" x-show="uploading" x-cloak>
+        <div class="fill" :style="'width:' + uploadPercent + '%'"></div>
+      </div>
+
+      <div class="actions">
+        <button class="btn" @click="showNew = false" :disabled="uploading">Cancelar</button>
+        <button class="btn btn-primary" :disabled="!selectedFiles.length || uploading" @click="uploadFiles()">
+          <span x-show="uploading" class="spinner"></span>
+          <span x-text="uploading ? ('Subiendo... ' + uploadPercent + '%') : 'Subir y procesar'"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <template x-if="!loading && projects.length === 0">
+    <div class="empty-state">
+      <div class="emoji">📼</div>
+      <h3>Todavía no hay proyectos</h3>
+      <p>Pega un link para empezar a descargar, transcribir y cortar clips.</p>
+      <button class="btn btn-primary" @click="showNew = true">+ Nuevo proyecto</button>
+    </div>
+  </template>
+
+  <div class="project-grid" x-show="projects.length > 0">
+    <template x-for="p in projects" :key="p.id">
+      <div class="card project-card" @click="goTo('/projects/' + p.id)">
+        <div class="title" x-text="p.title"></div>
+        <span class="badge" :class="badgeClass(p.stage)">
+          <span class="badge-dot"></span>
+          <span x-text="stageLabel(p.stage) + (isRunning(p.stage) && p.progress > 0 ? ' · ' + Math.round(p.progress) + '%' : '')"></span>
+        </span>
+        <div class="mini-bar" :class="{indeterminate: isRunning(p.stage) && !(p.progress > 0)}" x-show="isRunning(p.stage)" x-cloak>
+          <div class="fill" :style="'width:' + (p.progress || 0) + '%'"></div>
+        </div>
+        <div class="hint" x-text="stageHint(p.stage)"></div>
+        <div class="meta" x-show="isRunning(p.stage) && p.progress_detail" x-text="p.progress_detail" x-cloak></div>
+        <div class="meta" x-text="'Actualizado ' + timeAgo(p.updated_at)"></div>
+      </div>
+    </template>
+  </div>
+
+  <div class="toast-stack">
+    <template x-for="t in toasts" :key="t.id">
+      <div class="toast" :class="t.type" x-text="t.message"></div>
+    </template>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/js/dashboard.js?v={{ asset_version }}"></script>
+{% endblock %}

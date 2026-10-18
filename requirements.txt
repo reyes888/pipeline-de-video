@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+websockets
+python-multipart
+jinja2
+pydantic
+yt-dlp
+numpy
+
+# Motor de transcripción: según el equipo (pip elige solo el correcto)
+mlx-whisper; sys_platform == "darwin" and platform_machine == "arm64"
+faster-whisper; not (sys_platform == "darwin" and platform_machine == "arm64")

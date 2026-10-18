@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Pipeline de Video{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v={{ asset_version }}">
+  <script defer src="/static/js/alpine.min.js"></script>
+  <script src="/static/js/ws-client.js?v={{ asset_version }}"></script>
+  <script>
+    // Tema claro/oscuro: se aplica antes de pintar para evitar parpadeos.
+    (function () {
+      try {
+        var saved = localStorage.getItem("theme");
+        if (saved) document.documentElement.setAttribute("data-theme", saved);
+      } catch (e) {}
+    })();
+    function currentTheme() {
+      var set = document.documentElement.getAttribute("data-theme");
+      if (set) return set;
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    function toggleTheme() {
+      var next = currentTheme() === "dark" ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", next);
+      try { localStorage.setItem("theme", next); } catch (e) {}
+      updateThemeButton();
+    }
+    function updateThemeButton() {
+      var b = document.getElementById("theme-toggle");
+      if (!b) return;
+      var dark = currentTheme() === "dark";
+      b.textContent = dark ? "☀️" : "🌙";
+      b.title = dark ? "Cambiar a tema claro" : "Cambiar a tema oscuro";
+    }
+    document.addEventListener("DOMContentLoaded", updateThemeButton);
+
+    // Navegación dentro de la app: marca la bandera para que cerrar/salir
+    // de verdad (no solo cambiar de página interna) sea lo único que
+    // dispare el aviso de apagado automático.
+    window.__internalNav = false;
+    function goTo(url) {
+      window.__internalNav = true;
+      location.href = url;
+    }
+
+    window.addEventListener("pagehide", () => {
+      if (!window.__internalNav) {
+        navigator.sendBeacon("/api/shutdown-beacon");
+      }
+    });
+
+    async function shutdownServer() {
+      const activeSpinner = document.querySelector(".spinner");
+      const warning = activeSpinner
+        ? "Hay algo corriendo ahora mismo (descarga, transcripción o corte). ¿Apagar de todas formas? Se va a interrumpir."
+        : "¿Apagar el servidor? Vas a tener que volver a abrir la app para seguir usándola.";
+      if (!confirm(warning)) return;
+      window.__internalNav = true;
+      try {
+        await fetch("/api/shutdown", { method: "POST" });
+      } catch (e) { /* el servidor puede cerrarse antes de responder, es esperado */ }
+      document.body.innerHTML =
+        '<div style="display:flex; align-items:center; justify-content:center; height:100vh; font-family:-apple-system,sans-serif; color:#888;">Servidor apagado. Puedes cerrar esta pestaña.</div>';
+    }
+  </script>
+</head>
+<body>
+  <div class="app-shell">
+    {% block content %}{% endblock %}
+  </div>
+  <button id="theme-toggle" class="theme-toggle" type="button" onclick="toggleTheme()" aria-label="Cambiar tema claro/oscuro">🌙</button>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

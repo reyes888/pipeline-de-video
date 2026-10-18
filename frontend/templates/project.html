@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+{% block title %}Proyecto - Pipeline de Video{% endblock %}
+{% block content %}
+<div x-data="projectDetail('{{ project_id }}')">
+  <a class="link-back" href="/" @click.prevent="goTo('/')">← Todos los proyectos</a>
+
+  <div class="topbar">
+    <div>
+      <h1 x-text="project ? project.title : 'Cargando…'"></h1>
+      <div class="subtitle" x-show="project && project.source_url" x-text="project ? project.source_url : ''"></div>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <button class="btn" @click="openFolder()">📁 Abrir carpeta</button>
+      <button class="btn btn-danger" @click="deleteProject()">Eliminar</button>
+      <button class="btn" @click="shutdownServer()" title="Apagar el servidor">⏻ Apagar</button>
+    </div>
+  </div>
+
+  <template x-if="project">
+    <div>
+      <div class="stepper">
+        <template x-for="(s, i) in steps" :key="s.key">
+          <div style="display:flex; align-items:center;">
+            <div class="step" :class="stepClass(s)">
+              <span class="num" x-text="i + 1"></span>
+              <span x-text="s.label"></span>
+            </div>
+            <div class="step-connector" x-show="i < steps.length - 1"></div>
+          </div>
+        </template>
+      </div>
+
+      <div class="card" style="padding:12px 16px; margin-bottom:16px; border-color: var(--danger);" x-show="project.stage === 'error'" x-cloak>
+        <strong style="color: var(--danger);">Error:</strong> <span x-text="project.error_message"></span>
+      </div>
+
+      <!-- Etapa 1: Descargar/Preparar + Convertir -->
+      <div class="card stage-section">
+        <h2 x-text="project.source_type === 'upload' ? '1. Preparar video' : '1. Descargar y convertir a H264'"></h2>
+        <p class="desc" x-show="project.source_type !== 'upload'">Descarga el video desde el link y lo convierte automáticamente si el códec no es compatible (VP9/AV1 → H264).</p>
+        <p class="desc" x-show="project.source_type === 'upload'">Video subido. Se detecta el códec y se convierte automáticamente a H264 si hace falta — sin pasos extra.</p>
+
+        <button class="btn btn-primary" x-show="project.source_type !== 'upload'" :disabled="!canDownload" @click="startDownload()">
+          <span x-show="jobRunning('download')" class="spinner"></span>
+          <span x-text="jobRunning('download') ? 'Descargando…' : 'Iniciar descarga'"></span>
+        </button>
+        <span class="badge badge-progress" x-show="project.source_type === 'upload' && jobRunning('download')" x-cloak>
+          <span class="badge-dot"></span> Preparando video…
+        </span>
+        <span style="margin-left:10px; color:var(--text-muted); font-size:12.5px;" x-show="project.video_codec" x-text="'Códec: ' + project.video_codec + (project.was_converted ? ' (convertido a H264)' : '')"></span>
+        <div class="job-status" x-show="jobRunning('download')" x-cloak>
+          <div class="job-status-row">
+            <span class="job-label" x-text="statusLine('download')"></span>
+            <span class="job-activity" :class="{stalled: isStalled('download')}" x-text="activityText('download')"></span>
+          </div>
+          <div class="progress-bar" :class="{indeterminate: isIndeterminate('download')}">
+            <div class="fill" :style="'width:' + progress.download + '%'"></div>
+          </div>
+          <div class="stalled-warning" x-show="isStalled('download')" x-cloak>⚠️ No hay novedades desde hace un rato. Si sigue así, puede haberse detenido: apaga la app y vuelve a abrirla para que retome el trabajo.</div>
+        </div>
+        <details class="tech-details" x-show="logs.download.length" x-cloak>
+          <summary>Ver detalles técnicos</summary>
+          <div class="console" x-ref="downloadConsole">
+          <template x-for="(l, i) in logs.download" :key="i"><div :class="'line-' + l.level" x-text="l.message"></div></template>
+          </div>
+        </details>
+      </div>
+
+      <!-- Etapa 2: Transcribir -->
+      <div class="card stage-section">
+        <h2>2. Extraer audio y transcribir</h2>
+        <p class="desc">Extrae el audio y lo transcribe con Whisper (local, optimizado para Apple Silicon). Genera .txt, .srt y .json.</p>
+        <div style="display:flex; gap:12px; margin-bottom:12px;">
+          <div class="field" style="margin:0;">
+            <label>Idioma</label>
+            <select x-model="transcribeLang">
+              <option value="es">Español</option>
+              <option value="en">Inglés</option>
+            </select>
+          </div>
+          <div class="field" style="margin:0;">
+            <label>Modelo</label>
+            <select x-model="transcribeModel">
+              <option value="small">small (rápido)</option>
+              <option value="medium">medium (equilibrado)</option>
+              <option value="large-v3">large-v3 (más preciso)</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+          <button class="btn btn-primary" :disabled="!canTranscribe" @click="startTranscribe()">
+            <span x-show="jobRunning('transcribe')" class="spinner"></span>
+            <span x-text="jobRunning('transcribe') ? 'Transcribiendo…' : 'Iniciar transcripción'"></span>
+          </button>
+          <div class="equalizer" x-show="jobRunning('transcribe')" x-cloak>
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+          <span style="color:var(--text-muted); font-size:12.5px;" x-show="project.transcript && project.transcript.json_path && !jobRunning('transcribe')">Transcripción lista ✓</span>
+        </div>
+        <div class="job-status" x-show="jobRunning('transcribe')" x-cloak>
+          <div class="job-status-row">
+            <span class="job-label" x-text="statusLine('transcribe')"></span>
+            <span class="job-activity" :class="{stalled: isStalled('transcribe')}" x-text="activityText('transcribe')"></span>
+          </div>
+          <div class="progress-bar" :class="{indeterminate: isIndeterminate('transcribe')}">
+            <div class="fill" :style="'width:' + progress.transcribe + '%'"></div>
+          </div>
+          <div class="stalled-warning" x-show="isStalled('transcribe')" x-cloak>⚠️ No hay novedades desde hace un rato. Si sigue así, puede haberse detenido: apaga la app y vuelve a abrirla para que retome el trabajo.</div>
+        </div>
+        <div class="transcript-preview" x-show="transcriptPreview.length" x-cloak x-ref="transcriptPreviewPanel">
+          <template x-for="(chunk, i) in transcriptPreview" :key="i">
+            <p class="preview-chunk" x-text="chunk"></p>
+          </template>
+        </div>
+        <details class="tech-details" x-show="logs.transcribe.length" x-cloak>
+          <summary>Ver detalles técnicos</summary>
+          <div class="console" x-ref="transcribeConsole">
+          <template x-for="(l, i) in logs.transcribe" :key="i"><div :class="'line-' + l.level" x-text="l.message"></div></template>
+          </div>
+        </details>
+
+        <div class="format-picker" x-show="project.transcript && project.transcript.json_path" x-cloak>
+          <p class="desc" style="margin:14px 0 8px;">Elige el formato para descargar la transcripción:</p>
+          <div class="format-cards">
+            <div class="format-card" :class="{selected: selectedFormat === 'txt'}" @click="selectedFormat = 'txt'">
+              <div class="fmt-name">.txt</div>
+              <div class="fmt-desc">Texto plano — para leer o pegar en otro documento</div>
+            </div>
+            <div class="format-card" :class="{selected: selectedFormat === 'srt'}" @click="selectedFormat = 'srt'">
+              <div class="fmt-name">.srt</div>
+              <div class="fmt-desc">Subtítulos con tiempo — para tu editor de video</div>
+            </div>
+            <div class="format-card" :class="{selected: selectedFormat === 'json'}" @click="selectedFormat = 'json'">
+              <div class="fmt-name">.json</div>
+              <div class="fmt-desc">Datos con timestamps — para el paso de clips o uso técnico</div>
+            </div>
+          </div>
+          <a class="btn btn-primary" style="margin-top:12px;" :href="'/api/projects/' + projectId + '/transcript/download?fmt=' + selectedFormat">
+            ⬇ Descargar transcripción (.<span x-text="selectedFormat"></span>)
+          </a>
+        </div>
+      </div>
+
+      <!-- Etapa 3: Clips -->
+      <div class="card stage-section">
+        <h2>3. Encontrar los mejores momentos</h2>
+        <p class="desc">Copia el prompt y pégalo en Claude Code (u otra herramienta) apuntando a la transcripción. Luego pega o sube el clips.json resultante.</p>
+        <button class="btn" :disabled="!project.transcript || !project.transcript.json_path" @click="copyPrompt()">📋 Copiar prompt</button>
+        <div class="field" style="margin-top:14px;">
+          <label>Pegar clips.json aquí</label>
+          <textarea x-model="clipsJsonText" placeholder='[{"start": 12.3, "end": 45.0, "titulo": "...", "puntaje_viral": 8, "razon": "..."}]' style="min-height:100px;"></textarea>
+        </div>
+        <button class="btn btn-primary" :disabled="!clipsJsonText.trim()" @click="importClips()">Importar clips</button>
+
+        <table class="clip-table" x-show="project.clips.length" x-cloak style="margin-top:16px;">
+          <thead><tr><th style="width:24px;"></th><th>Título</th><th style="width:70px;">Inicio</th><th style="width:70px;">Fin</th><th style="width:50px;">Score</th><th style="width:36px;"></th></tr></thead>
+          <tbody>
+            <template x-for="clip in project.clips" :key="clip.id">
+              <tr>
+                <td><input type="checkbox" x-model="clip.selected" @change="saveClip(clip)"></td>
+                <td><input type="text" x-model="clip.titulo" @change="saveClip(clip)"></td>
+                <td><input type="number" step="0.1" x-model.number="clip.start" @change="saveClip(clip)"></td>
+                <td><input type="number" step="0.1" x-model.number="clip.end" @change="saveClip(clip)"></td>
+                <td><span class="clip-score" x-text="clip.puntaje_viral"></span></td>
+                <td><button class="btn btn-sm btn-danger" @click="deleteClip(clip)">✕</button></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Etapa 4: Cortar -->
+      <div class="card stage-section">
+        <h2>4. Cortar clips finales</h2>
+        <p class="desc">Corta los clips seleccionados con ffmpeg.</p>
+        <label style="display:flex; align-items:center; gap:6px; font-size:13px; margin-bottom:12px;">
+          <input type="checkbox" x-model="vertical916"> Recorte vertical 9:16 (TikTok/Reels)
+        </label>
+        <button class="btn btn-primary" :disabled="!canCut" @click="startCut()">
+          <span x-show="jobRunning('cut')" class="spinner"></span>
+          <span x-text="jobRunning('cut') ? 'Cortando…' : 'Cortar clips seleccionados'"></span>
+        </button>
+        <div class="job-status" x-show="jobRunning('cut')" x-cloak>
+          <div class="job-status-row">
+            <span class="job-label" x-text="statusLine('cut')"></span>
+            <span class="job-activity" :class="{stalled: isStalled('cut')}" x-text="activityText('cut')"></span>
+          </div>
+          <div class="progress-bar" :class="{indeterminate: isIndeterminate('cut')}">
+            <div class="fill" :style="'width:' + progress.cut + '%'"></div>
+          </div>
+          <div class="stalled-warning" x-show="isStalled('cut')" x-cloak>⚠️ No hay novedades desde hace un rato. Si sigue así, puede haberse detenido: apaga la app y vuelve a abrirla para que retome el trabajo.</div>
+        </div>
+        <details class="tech-details" x-show="logs.cut.length" x-cloak>
+          <summary>Ver detalles técnicos</summary>
+          <div class="console" x-ref="cutConsole">
+          <template x-for="(l, i) in logs.cut" :key="i"><div :class="'line-' + l.level" x-text="l.message"></div></template>
+          </div>
+        </details>
+        <div class="clip-preview-grid" x-show="finalClips.length" x-cloak>
+          <template x-for="fc in finalClips" :key="fc.filename">
+            <div class="card clip-preview-card">
+              <video controls :src="'/api/projects/' + projectId + '/clips_finales/' + fc.filename"></video>
+              <span class="badge badge-neutral" x-text="fc.filename.includes('_9x16') ? '9:16' : '16:9'"></span>
+              <div class="title" x-text="fc.filename"></div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <div class="toast-stack">
+    <template x-for="t in toasts" :key="t.id">
+      <div class="toast" :class="t.type" x-text="t.message"></div>
+    </template>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/js/project.js?v={{ asset_version }}"></script>
+{% endblock %}

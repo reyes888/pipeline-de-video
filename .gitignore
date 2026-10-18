@@ -1,0 +1,13 @@
+# Entorno y datos del usuario (NUNCA subir: pesan GB y son contenido personal)
+venv/
+.venv/
+data/
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+
+# Sistema
+.DS_Store
+Thumbs.db
